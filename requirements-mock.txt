@@ -1,0 +1,4 @@
+# Optional: local mock API (events + visitor gallery)
+-r requirements.txt
+fastapi>=0.115.0
+uvicorn>=0.30.0

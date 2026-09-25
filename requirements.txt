@@ -1,0 +1,11 @@
+# Python 3.11 required (see .python-version).
+#
+# These pins are not cosmetic. keras-facenet loads a Keras-2 model, which
+# TensorFlow 2.16+ (Keras 3) refuses, and this generation of packages predates
+# numpy 2.x. Do not "upgrade to latest" -- the face worker will stop loading.
+numpy>=1.23,<2
+opencv-python>=4.7,<5
+tensorflow==2.13.0
+keras-facenet==0.3.2
+mtcnn==0.1.1
+httpx>=0.27.0

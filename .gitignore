@@ -1,0 +1,23 @@
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.DS_Store
+Thumbs.db
+
+# Biometric data never goes to GitHub: enrollment photos, embeddings, and the
+# visitor snapshots the worker writes are all personal data of real people.
+# (Excluding a directory outright stops git descending into it, so the
+# placeholder has to be re-included level by level.)
+data/faces/*
+!data/faces/gallery/
+data/faces/gallery/*
+!data/faces/gallery/.gitkeep
+*.pkl
+data/live_logs/**
+!data/live_logs/.gitkeep
+data/mock_events/**
+!data/mock_events/.gitkeep
+
+.env
+*.log
