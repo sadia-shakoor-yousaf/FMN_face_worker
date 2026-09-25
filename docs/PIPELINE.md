@@ -10,7 +10,7 @@ How the care-PC process turns door-camera frames into a visitor event.
 Door camera / video file
         │
         ▼
-   Face detector (MTCNN or Haar) → largest face box
+   Face detector (Haar by default, MTCNN offline) → largest face box
         │
         ▼
    Crop → 160×160 RGB
@@ -87,11 +87,25 @@ visit.
 
 ## Performance notes
 
-MTCNN is accurate and slow; Haar is roughly an order of magnitude faster on CPU
-with slightly weaker unknown rejection. Whichever you pick, **enrollment and
-live matching must use the same detector** — the crops differ systematically, so
-mixing them shifts every score. The worker warns if the gallery metadata
-disagrees with `--detector`.
+Measured on the development machine, 640×480 frames:
+
+| Stage | Cost |
+| --- | --- |
+| Haar detection | ~190 ms/frame |
+| MTCNN detection | ~2000 ms/frame (plus ~10 s one-off init) |
+| FaceNet embedding | ~50 ms per detected face |
+| End-to-end, Haar | ~5–8 FPS |
+
+MTCNN is therefore **offline-only** in practice: at 0.5 FPS a `--need 5` streak
+would take ten seconds of standing still. Haar is the default on both sides.
+
+Whichever you pick, **enrollment and live matching must use the same detector**
+— the crops differ systematically, so mixing them shifts every score. The worker
+warns if the gallery metadata disagrees with `--detector`.
+
+What has *not* been measured: whether Haar's looser crops cost accuracy versus
+MTCNN's on real door-camera footage. The research comparison was done on clean
+photos, where both reached the same Rank-1.
 
 On a slow CPU, raise `--skip` before lowering accuracy anywhere else.
 
@@ -103,7 +117,8 @@ On a slow CPU, raise `--skip` before lowering accuracy anywhere else.
 | --- | --- |
 | `--cam 0` | USB camera index |
 | `--source clip.mp4` | File instead of camera |
-| `--api-url URL` | FMN base URL (empty `""` = no POST) |
+| `--api-url URL` | FMN base URL for the event POST |
+| `--no-post` | Recognize and log only, no API call |
 | `--patient-id N` | Integer `patients.id` |
 | `--gallery PATH` | Local `.pkl` or photo folder |
 | `--gallery-url URL` | Fetch enrolled vectors from the backend instead |

@@ -1,4 +1,13 @@
-# Optional: local mock API (events + visitor gallery)
--r requirements.txt
+# Local mock API only. Install this in a SEPARATE venv (.venv-mock).
+#
+# It cannot share the worker's venv: TensorFlow 2.13 pins
+# typing-extensions<4.6, and pydantic v2 (which FastAPI needs) requires
+# typing-extensions>=4.6.1. Keeping them apart is also convenient -- testing
+# your endpoint shape against this mock needs no TensorFlow at all.
+#
+#   py -3.11 -m venv .venv-mock
+#   .venv-mock\Scripts\python.exe -m pip install -r requirements-mock.txt
+#   .venv-mock\Scripts\python.exe -m uvicorn mock_api.app:app --port 5155
+numpy>=1.23
 fastapi>=0.115.0
 uvicorn>=0.30.0

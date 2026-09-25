@@ -88,14 +88,23 @@ py -3.11 -m venv .venv
 
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-
-# Optional: mock API for offline contract testing
-pip install -r requirements-mock.txt
 ```
 
 > **The pins are load-bearing.** `keras-facenet` loads a Keras-2 model that
 > TensorFlow 2.16+ (Keras 3) refuses, and this package generation predates
 > numpy 2.x. Do not upgrade TensorFlow or numpy.
+
+### Optional: mock API, in its own venv
+
+The mock needs a **separate** venv. TensorFlow 2.13 pins
+`typing-extensions<4.6` while FastAPI's pydantic v2 needs `>=4.6.1`, so they
+cannot coexist. The upside: testing your endpoint shape against the mock
+requires no TensorFlow at all.
+
+```bash
+py -3.11 -m venv .venv-mock
+.venv-mock\Scripts\python.exe -m pip install -r requirements-mock.txt
+```
 
 ---
 
@@ -116,19 +125,24 @@ slight angles. Six frames from one selfie burst teach it one lighting condition
 and nothing else.
 
 ```bash
-python scripts/enroll_faces.py               # accurate, slow (MTCNN)
-python scripts/enroll_faces.py --detector haar   # much faster on CPU
+python scripts/enroll_faces.py                    # Haar, the default
+python scripts/enroll_faces.py --detector mtcnn   # slower; see the note below
 ```
+
+Both sides must use the **same** detector, and only Haar is fast enough for a
+live camera (measured on this machine at 640×480: Haar ~190ms/frame, MTCNN
+~2000ms/frame). So Haar is the default for enrollment too. Use MTCNN only if
+you also pass `--detector mtcnn` to the worker and can live with ~0.5 FPS.
 
 Nothing under `data/faces/` is committed. It is biometric data of real people;
 keep it that way.
 
 ### 2) Mock API (no real backend yet)
 
-**Terminal 1 — mock server**
+**Terminal 1 — mock server** (uses the mock venv)
 
 ```bash
-uvicorn mock_api.app:app --host 127.0.0.1 --port 5155
+.venv-mock\Scripts\python.exe -m uvicorn mock_api.app:app --host 127.0.0.1 --port 5155
 ```
 
 **Terminal 2 — smoke POST (no camera)**
@@ -148,11 +162,14 @@ python workers/face_worker.py --cam 0 --api-url http://127.0.0.1:5155 --patient-
 python workers/face_worker.py --source path/to/clip.mp4 --no-preview --api-url http://127.0.0.1:5155 --patient-id 1
 
 # local only, no POST
-python workers/face_worker.py --cam 0 --api-url ""
+python workers/face_worker.py --cam 0 --no-post
 ```
 
 On an event you should see `POST visitor_recognized ok id=...` in the log. Mock
 events are also written to `data/mock_events/events.json`.
+
+Use `--no-post`, not `--api-url ""`: PowerShell silently discards an empty
+string argument, so the next flag gets eaten instead.
 
 ---
 
@@ -204,7 +221,8 @@ silently accepting strangers — see [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDI
 
 | Flag | Example | Meaning |
 | --- | --- | --- |
-| `--api-url` | `https://api...` | Base URL; `""` disables POST |
+| `--api-url` | `https://api...` | Base URL for the event POST |
+| `--no-post` | | Recognize and log only, no API call |
 | `--patient-id` | `1` | Required for POST |
 | `--gallery` | `data/faces/gallery.pkl` | Local enrolled visitors |
 | `--gallery-url` | `https://api...` | Fetch enrolled vectors from the backend |
@@ -227,8 +245,10 @@ Logs and snapshots land in `data/live_logs/`.
 - **The 0.675 threshold was tuned on photos**, not on a 480p door camera with
   backlight and motion blur. Expect to re-check it with `--threshold` on real
   hardware. A "wrong" unknown is usually a threshold issue, not a broken API.
-- **MTCNN is slow on CPU** — use `--detector haar` for anything live, and enrol
-  with the same detector.
+- **MTCNN is unusable live on CPU** — measured at ~2s/frame here, against
+  ~190ms for Haar. Haar is the default on both sides for that reason. Whether
+  Haar's looser crops cost accuracy on a real door camera has **not** been
+  measured.
 - **Largest face only.** Two people at the door produce one event. Matches the
   fall worker's largest-person rule and the solo-elderly deployment this product
   targets.

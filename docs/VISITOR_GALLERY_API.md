@@ -139,7 +139,7 @@ worker adapts — it's one function on our side either way.
 The mock in this repo already serves this contract:
 
 ```bash
-uvicorn mock_api.app:app --host 127.0.0.1 --port 5155
+.venv-mock\Scripts\python.exe -m uvicorn mock_api.app:app --host 127.0.0.1 --port 5155
 curl http://127.0.0.1:5155/api/v1/patients/1/visitors
 ```
 

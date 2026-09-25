@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from face_cv.pipeline import (
+    DEFAULT_DETECTOR,
     EMBEDDING_DIM,
     EMBEDDING_MODEL,
     FACE_SIZE,
@@ -74,7 +75,9 @@ def main() -> int:
         default=None,
         help="Also embed a real photo to check the detect+crop path",
     )
-    p.add_argument("--detector", choices=["mtcnn", "haar"], default="mtcnn")
+    p.add_argument(
+        "--detector", choices=["mtcnn", "haar"], default=DEFAULT_DETECTOR
+    )
     args = p.parse_args()
 
     print(f"expected model: {EMBEDDING_MODEL}")

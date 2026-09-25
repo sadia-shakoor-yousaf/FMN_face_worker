@@ -22,6 +22,10 @@ import cv2
 import numpy as np
 
 DEFAULT_THRESHOLD = 0.675
+# Measured on this repo's CPU, 640x480: haar ~190ms/frame, mtcnn ~2000ms/frame.
+# MTCNN cannot keep up with a live camera, and enrollment must use the same
+# detector as matching, so haar is the default on both sides.
+DEFAULT_DETECTOR = "haar"
 FACE_SIZE = (160, 160)
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
 UNKNOWN_LABEL = "unknown"
@@ -46,8 +50,10 @@ def get_embedder():
         try:
             from keras_facenet import FaceNet
         except ImportError as e:
+            # Name the module that actually failed: keras-facenet pulls in
+            # scipy and h5py without declaring them.
             raise RuntimeError(
-                "keras-facenet is not installed in this environment. "
+                f"cannot import keras-facenet ({e.name!r} is missing). "
                 "This worker needs its own Python 3.11 venv: "
                 "pip install -r requirements.txt"
             ) from e
@@ -56,7 +62,8 @@ def get_embedder():
 
 
 class _MtcnnDetector:
-    """Accurate, slow. Use for enrollment."""
+    """Accurate but ~2s/frame on CPU. Only usable offline, and only if
+    enrollment and live matching both use it."""
 
     name = "mtcnn"
 
@@ -76,7 +83,7 @@ class _MtcnnDetector:
 
 
 class _HaarDetector:
-    """~20x faster than MTCNN on CPU, slightly worse unknown rejection."""
+    """~10x faster than MTCNN on CPU, slightly worse unknown rejection."""
 
     name = "haar"
 
@@ -97,7 +104,7 @@ class _HaarDetector:
         return sorted(boxes, key=lambda b: b[2] * b[3], reverse=True)
 
 
-def get_detector(name: str = "mtcnn"):
+def get_detector(name: str = DEFAULT_DETECTOR):
     """Lazy-init a face detector by name ('mtcnn' or 'haar')."""
     key = name.lower()
     if key not in _detectors:
@@ -127,7 +134,7 @@ def crop_face(img_rgb: np.ndarray, box: Box) -> np.ndarray | None:
 
 def largest_face(
     img_rgb: np.ndarray,
-    detector_name: str = "mtcnn",
+    detector_name: str = DEFAULT_DETECTOR,
 ) -> tuple[np.ndarray, Box] | None:
     """Return (160x160 RGB crop, box) for the biggest face, or None."""
     boxes = get_detector(detector_name).boxes(img_rgb)
@@ -186,7 +193,7 @@ def to_confidence(score: float) -> float:
 def build_gallery(
     photos_dir: str | Path,
     *,
-    detector_name: str = "mtcnn",
+    detector_name: str = DEFAULT_DETECTOR,
     verbose: bool = True,
 ) -> Gallery:
     """Embed every photo under ``photos_dir/<person_name>/<image>``."""
@@ -262,7 +269,7 @@ def load_visitor_gallery(
     if source.is_dir():
         gallery = build_gallery(source, verbose=False)
         return gallery, {
-            "detector": "mtcnn",
+            "detector": DEFAULT_DETECTOR,
             "threshold": DEFAULT_THRESHOLD,
             "embedding_model": EMBEDDING_MODEL,
         }

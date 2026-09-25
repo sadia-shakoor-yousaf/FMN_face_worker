@@ -6,7 +6,7 @@ enrolled visitor gallery -> streak + cooldown -> POST to FMN event API.
 
   python workers/face_worker.py --cam 0 --patient-id 1
   python workers/face_worker.py --source path/to/clip.mp4 --no-preview
-  python workers/face_worker.py --cam 0 --api-url ""   # local log only
+  python workers/face_worker.py --cam 0 --no-post   # local log only
 
 Gallery comes from a local .pkl (scripts/enroll_faces.py) or, with
 --gallery-url, from the FMN backend. See docs/VISITOR_GALLERY_API.md.
@@ -31,6 +31,7 @@ from face_cv.fmn_client import DEFAULT_BASE_URL, FmnClientError, post_event
 from face_cv.gallery_sync import GallerySyncError, cache_path, fetch_visitor_gallery
 from face_cv.live import DEFAULT_COOLDOWN_S, DEFAULT_NEED, LiveFaceRecognizer
 from face_cv.pipeline import (
+    DEFAULT_DETECTOR,
     DEFAULT_THRESHOLD,
     UNKNOWN_LABEL,
     embed_face,
@@ -162,7 +163,13 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=DEFAULT_BASE_URL,
         help=f"FMN base URL for POST /api/v1/events (default {DEFAULT_BASE_URL}). "
-        'Empty string "" disables POST.',
+        "Use --no-post to disable posting.",
+    )
+    p.add_argument(
+        "--no-post",
+        action="store_true",
+        help="Recognize and log locally without calling the API. Prefer this "
+        'over --api-url "", which PowerShell silently drops.',
     )
     p.add_argument(
         "--gallery",
@@ -191,7 +198,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--detector",
         choices=["mtcnn", "haar"],
-        default="mtcnn",
+        default=DEFAULT_DETECTOR,
         help="Must match whatever you enrolled with. haar is far faster on CPU",
     )
     p.add_argument("--threshold", type=float, default=None, help="default from gallery")
@@ -233,7 +240,7 @@ def main() -> int:
     args = parse_args()
     log = _setup_log(args.log_dir)
 
-    api_url = (args.api_url or "").strip()
+    api_url = "" if args.no_post else (args.api_url or "").strip()
     post_enabled = bool(api_url)
     if post_enabled and not args.patient_id:
         log.warning(

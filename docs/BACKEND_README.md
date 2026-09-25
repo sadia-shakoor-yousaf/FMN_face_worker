@@ -159,7 +159,6 @@ Then install:
 ```bash
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-pip install -r requirements-mock.txt   # optional, for the local fake server
 ```
 
 This downloads TensorFlow, so expect a few hundred MB and a few minutes.
@@ -167,6 +166,18 @@ This downloads TensorFlow, so expect a few hundred MB and a few minutes.
 > **Do not "upgrade to latest."** The pins in `requirements.txt` are
 > deliberate: TensorFlow 2.16+ ships Keras 3, which refuses to load the face
 > model this worker uses.
+
+### Optional: the fake server needs a second venv
+
+If you want the local mock API, install it separately. It cannot share the
+venv above, because TensorFlow 2.13 pins `typing-extensions<4.6` and FastAPI's
+pydantic v2 needs `>=4.6.1`. Convenient side effect: checking your endpoint
+shape against the mock needs no TensorFlow at all.
+
+```bash
+py -3.11 -m venv .venv-mock
+.venv-mock\Scripts\python.exe -m pip install -r requirements-mock.txt
+```
 
 ---
 
@@ -227,7 +238,7 @@ Run the mock server and compare its response to yours.
 **Terminal 1:**
 
 ```bash
-uvicorn mock_api.app:app --host 127.0.0.1 --port 5155
+.venv-mock\Scripts\python.exe -m uvicorn mock_api.app:app --host 127.0.0.1 --port 5155
 ```
 
 **Terminal 2:**
@@ -262,9 +273,12 @@ data/faces/gallery/
 Then:
 
 ```bash
-python scripts/enroll_faces.py --detector haar
-python workers/face_worker.py --cam 0 --patient-id 1 --detector haar --api-url https://YOUR_API_HOST
+python scripts/enroll_faces.py
+python workers/face_worker.py --cam 0 --patient-id 1 --api-url https://YOUR_API_HOST
 ```
+
+Both commands default to the Haar detector, which is the only one fast enough
+for a live camera. Just don't change it on one side only.
 
 ### What you should see
 
@@ -307,6 +321,7 @@ You do **not** need to run recognition on live camera frames.
 5. **Upgraded TensorFlow** — breaks model loading. Keep the pins.
 6. **Ran commands from the wrong folder** — you must be inside `FMN_face_worker`.
 7. **Enrolled with one detector, ran with another** — scores shift. Use the same `--detector` in both commands.
+8. **Tried `--api-url ""` to disable posting** — PowerShell throws the empty string away and the next flag gets eaten. Use `--no-post`.
 
 ---
 

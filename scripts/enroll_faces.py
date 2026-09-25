@@ -23,7 +23,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from face_cv.pipeline import DEFAULT_THRESHOLD, build_gallery, save_gallery
+from face_cv.pipeline import (
+    DEFAULT_DETECTOR,
+    DEFAULT_THRESHOLD,
+    build_gallery,
+    save_gallery,
+)
 
 DEFAULT_PHOTOS_DIR = ROOT / "data" / "faces" / "gallery"
 DEFAULT_OUT = ROOT / "data" / "faces" / "gallery.pkl"
@@ -37,8 +42,9 @@ def main() -> int:
     p.add_argument(
         "--detector",
         choices=["mtcnn", "haar"],
-        default="mtcnn",
-        help="Enrollment is offline, so the slow accurate one is fine (default mtcnn)",
+        default=DEFAULT_DETECTOR,
+        help="Must match what the worker runs, so the worker's pace decides "
+        f"this (default {DEFAULT_DETECTOR})",
     )
     p.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     args = p.parse_args()

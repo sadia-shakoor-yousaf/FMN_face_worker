@@ -20,15 +20,26 @@ Both sides must do exactly this, in this order:
 | Step | Requirement |
 | --- | --- |
 | 1. Read image | Any loader, but the array handed to step 2 must be **RGB** |
-| 2. Detect face | MTCNN, largest box by area (`w * h`) |
+| 2. Detect face | OpenCV Haar frontal-face cascade, largest box by area (`w * h`) |
 | 3. Crop | `img[y : y+h, x : x+w]`, clamping negative `x`/`y` to 0 |
 | 4. Resize | `cv2.resize(crop, (160, 160))` |
 | 5. Cast | `float32`, values kept in `0..255` (**no** /255 scaling) |
 | 6. Embed | `keras_facenet.FaceNet().embeddings(batch)` → 512-d |
 | 7. Normalize | Divide by the L2 norm, so `‖v‖ = 1` |
 
-Pins: `tensorflow==2.13.0`, `keras-facenet==0.3.2`, `mtcnn==0.1.1`, `numpy<2`.
+Pins: `tensorflow==2.13.0`, `keras-facenet==0.3.2`, `mtcnn==0.1.1`,
+`scipy<1.14`, `numpy<2`. (`keras-facenet` imports scipy without declaring it,
+so pip will not install it for you.)
+
 Model identifier used on the wire: **`keras-facenet-0.3.2`**.
+
+### Why Haar and not MTCNN in step 2
+
+Steps 5–7 define the embedding space; step 2 only has to **match the live
+worker**, because detector crops differ systematically and shift every score.
+The live worker is stuck with Haar — MTCNN costs ~2s per frame on CPU, which no
+door camera can absorb — so enrollment uses Haar too. Nothing stops the project
+switching both sides to MTCNN later; they just have to move together.
 
 Reference implementation is `face_cv/pipeline.py` in this repo
 (`largest_face` + `embed_face`). Copying those two functions is the safest
