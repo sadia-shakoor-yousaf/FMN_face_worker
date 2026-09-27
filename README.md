@@ -59,6 +59,7 @@ FMN_face_worker/
 ├── requirements-mock.txt         # + FastAPI mock server
 ├── face_cv/                      # detectors, FaceNet, matching, sync, HTTP client
 ├── workers/face_worker.py        # main entrypoint
+├── scripts/capture_enrollment.py # webcam → enrollment photos
 ├── scripts/enroll_faces.py       # photos → local gallery.pkl
 ├── scripts/verify_embedding.py   # prove two machines share an embedding space
 ├── scripts/smoke_post.py         # POST a visitor event without a camera
@@ -112,7 +113,18 @@ py -3.11 -m venv .venv-mock
 
 ### 1) Enrol a few faces
 
-Folder name = the label the caregiver sees.
+Easiest route — capture straight from the camera the worker will watch:
+
+```bash
+python scripts/capture_enrollment.py --name your_name
+```
+
+It saves only frames where a face is detected. Move a little between shots:
+turn your head slightly, change expression, glasses off. Enrolling from the
+same camera also avoids the photo-vs-video domain gap that makes a known person
+score as unknown.
+
+Or drop files in by hand. Folder name = the label the caregiver sees.
 
 ```text
 data/faces/gallery/
@@ -120,9 +132,8 @@ data/faces/gallery/
     ammi/      1.jpg 2.jpg 3.jpg 4.jpg 5.jpg
 ```
 
-Five or six varied photos per person — different lighting, glasses on and off,
-slight angles. Six frames from one selfie burst teach it one lighting condition
-and nothing else.
+Five or six varied photos per person. Six frames from one selfie burst teach it
+one lighting condition and nothing else.
 
 ```bash
 python scripts/enroll_faces.py                    # Haar, the default

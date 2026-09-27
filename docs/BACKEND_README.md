@@ -262,12 +262,18 @@ identifier).
 
 ## Path 3: run the real worker with a camera
 
-You need enrolled faces first. Locally that means a few photos per person:
+You need enrolled faces first. The quickest way is to photograph yourself with
+the laptop webcam:
+
+```bash
+python scripts/capture_enrollment.py --name your_name
+```
+
+Move your head a little between shots. That writes into:
 
 ```text
 data/faces/gallery/
-    your_name/      1.jpg 2.jpg 3.jpg 4.jpg 5.jpg
-    a_colleague/    1.jpg 2.jpg 3.jpg 4.jpg 5.jpg
+    your_name/      1.jpg 2.jpg 3.jpg 4.jpg 5.jpg 6.jpg
 ```
 
 Then:
