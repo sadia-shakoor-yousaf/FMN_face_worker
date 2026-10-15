@@ -78,7 +78,7 @@ def fetch_visitor_gallery(
     """GET this patient's enrolled visitors. Writes a local cache on success."""
     url = base_url.rstrip("/") + VISITORS_PATH.format(patient_id=int(patient_id))
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
             resp = client.get(url)
     except httpx.HTTPError as e:
         raise GallerySyncError(f"cannot reach {url}: {e}") from e

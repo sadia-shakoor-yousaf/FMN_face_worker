@@ -6,6 +6,7 @@ from typing import Any
 
 import httpx
 
+# Same process as: python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 5155
 DEFAULT_BASE_URL = "http://127.0.0.1:5155"
 EVENTS_PATH = "/api/v1/events"
 
@@ -42,7 +43,7 @@ def post_event(
         "source": source,
     }
     try:
-        with httpx.Client(timeout=timeout) as client:
+        with httpx.Client(timeout=timeout, trust_env=False) as client:
             resp = client.post(url, json=payload)
     except httpx.TimeoutException as e:
         raise FmnClientError(f"timeout posting to {url}") from e

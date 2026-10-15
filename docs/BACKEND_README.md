@@ -193,7 +193,7 @@ python scripts/smoke_post.py --api-url https://YOUR_API_HOST --patient-id 1 --ty
 
 Examples of `--api-url`:
 
-- `http://127.0.0.1:8000` (API on your own machine)
+- `http://127.0.0.1:5155` (API on your own machine)
 - `https://api.yourdomain.com` (deployed API)
 
 Do **not** put `/api/v1/events` in `--api-url`. The script adds that path for
