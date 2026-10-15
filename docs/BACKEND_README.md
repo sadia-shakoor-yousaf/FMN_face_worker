@@ -4,7 +4,7 @@ This guide is for the **FMN backend team**.
 You do **not** need to understand machine learning. You need to:
 
 1. Accept two new event types on an endpoint you already have.
-2. Serve one new endpoint that lists a patient's enrolled visitors.
+2. On enrollment, generate a FaceNet vector per photo and upsert it into the Qdrant collection `visitor_faces`.
 3. Confirm a visitor event shows up in `activity_logs`.
 
 If you have never cloned a GitHub repo or used Python before, follow this page
@@ -44,33 +44,18 @@ works, you mostly need to accept two more `type` values plus
 Falls need no data from you. Visitors do — the worker has to know *who* is
 enrolled, and families enrol people **in the app**, not on the care PC.
 
-So there is one new endpoint to build:
+Enrollment writes vectors to **Qdrant Cloud**, collection `visitor_faces` (512 dimensions, Cosine). The care PC loads them with `--from-qdrant`. Contract: [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md) and [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md).
 
-```http
-GET /api/v1/patients/{patient_id}/visitors
-```
+You generate the vectors. Two things are mandatory:
 
-Contract: [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md).
+1. Follow [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md) exactly (RGB, Haar, 160×160, `keras-facenet` 0.3.2, L2-normalized, no divide-by-255).
+2. Run `python scripts/verify_embedding.py` on the machine that embeds and get `PASS` before uploading real photos.
 
-You have a choice about what it returns, and it changes how much work you do:
+Each photo is one Qdrant point. Payload must include integer `patient_id`, `name`, and `embedding_model: keras-facenet-0.3.2`. Do not use Qdrant's hosted embedding models.
 
-| Option | You return | You install | Risk |
-| --- | --- | --- | --- |
-| **A** | Photo URLs + names | Nothing | None |
-| **B** | 512-number vectors + names | TensorFlow 2.13, keras-facenet, mtcnn (~2GB) | Must match our processing exactly |
+An older option is still in the worker: serve `GET /api/v1/patients/{patient_id}/visitors` and start it with `--gallery-url`. That is not the path to build unless you are deliberately avoiding Qdrant.
 
-Option B is fine — but if you generate the vectors, your processing has to match
-the care PC's *exactly*, or recognition silently stops working while every
-endpoint still returns `200`. That is not hypothetical: in our testing, vectors
-from a mismatched path let through **100% of strangers**.
-
-So if you pick B, two things are mandatory:
-
-1. Read [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md).
-2. Run `python scripts/verify_embedding.py` on your server and get `PASS`.
-
-If TensorFlow on the API server sounds unappealing (it is CPU-only on Windows at
-that version), pick **A** and we will do the processing here.
+The processing has to match the care PC *exactly*, or recognition silently stops working while Qdrant still accepts the points. That is not hypothetical: in our testing, vectors from a mismatched path let through **100% of strangers**. TensorFlow 2.13 is ~2GB and CPU-only on Windows at that version; it still has to run on whatever machine embeds the photos.
 
 ---
 
@@ -79,7 +64,8 @@ that version), pick **A** and we will do the processing here.
 | Relevant to backend | You can ignore |
 | --- | --- |
 | [`EVENT_API.md`](EVENT_API.md) — request/response contract | How FaceNet works inside |
-| [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md) — the endpoint we need | Threshold tuning research |
+| [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md) — Qdrant collection the worker reads | Threshold tuning research |
+| [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md) — how to turn a photo into a vector | |
 | `scripts/smoke_post.py` — test your endpoint with no camera | `data/live_logs/` snapshots (local only) |
 | `patient_id` = **integer** patient PK | Caregiver UUID (you resolve it from the patient row) |
 | Inserting into `activity_logs` | Running recognition on live frames |
@@ -247,16 +233,13 @@ Run the mock server and compare its response to yours.
 curl http://127.0.0.1:5155/api/v1/patients/1/visitors
 ```
 
-Your endpoint should return the same field names and types. Then point the
-worker at your server instead:
+That mock is the older HTTP gallery. For Qdrant, upsert a point into `visitor_faces` and point the worker at the cluster:
 
 ```bash
-python workers/face_worker.py --cam 0 --patient-id 1 --gallery-url https://YOUR_API_HOST --api-url https://YOUR_API_HOST
+python workers/face_worker.py --cam 0 --patient-id 39 --from-qdrant --api-url https://YOUR_API_HOST
 ```
 
-The worker logs `synced N visitor(s) from ...` on success, or tells you exactly
-which rule your payload broke (vector length, normalization, or model
-identifier).
+`URL` and `API_KEY` come from `.env`. The worker logs `synced N visitor(s) from Qdrant collection visitor_faces` on success, or tells you exactly which rule a point broke (vector length, normalization, or model identifier). `--gallery-url` is only for the HTTP gallery above.
 
 ---
 
@@ -309,9 +292,9 @@ Local snapshots (not uploaded) appear under `data/live_logs/`.
 - [ ] `patient_id` accepted as **integer**
 - [ ] Valid event → insert `activity_logs` → `201` + created row
 - [ ] `smoke_post.py` succeeds against your server for both visitor types
-- [ ] `GET /api/v1/patients/{id}/visitors` implemented per [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md)
-- [ ] Decided Option A (photo URLs) or Option B (vectors)
-- [ ] **If Option B:** `scripts/verify_embedding.py` prints `PASS` on your server
+- [ ] Enrollment upserts one 512-d point per photo into Qdrant `visitor_faces`
+- [ ] Each point has `patient_id` (int), `name`, and `embedding_model` = `keras-facenet-0.3.2`
+- [ ] `scripts/verify_embedding.py` prints `PASS` on the machine that embeds
 - [ ] Caregiver notification path wired the same way as your other activity logs
 
 You do **not** need to run recognition on live camera frames.

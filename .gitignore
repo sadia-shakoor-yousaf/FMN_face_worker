@@ -22,3 +22,4 @@ data/mock_events/**
 
 .env
 *.log
+scripts/FYP.code-workspace

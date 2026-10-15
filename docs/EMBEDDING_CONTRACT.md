@@ -83,22 +83,18 @@ Run this **before** wiring up enrollment, not after the demo fails.
 
 ## Versioning
 
-Store the model identifier next to every vector, and return it from the
-visitor endpoint as `embedding_model`. The worker refuses to match vectors from
-an identifier it does not recognize, rather than producing confident nonsense.
+Store the model identifier on every Qdrant point as `embedding_model`
+(`keras-facenet-0.3.2`). The worker refuses to match vectors from an identifier
+it does not recognize, rather than producing confident nonsense. Collection,
+payload, and the upsert shape are in [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md).
 
 If the model ever changes, every enrolled visitor must be re-embedded and the
 threshold re-tuned. Thresholds do not transfer between models.
 
 ---
 
-## The simpler alternative
+## Where the vector goes
 
-If installing TensorFlow 2.13 on the API server is unattractive — it is ~2GB,
-and on Windows that version is CPU-only — the backend can store the **photos**
-plus metadata and let the care PC embed them. Then FaceNet exists in exactly
-one place, this whole document becomes unnecessary, and the failure modes above
-cannot happen. The endpoint in `VISITOR_GALLERY_API.md` would return image URLs
-instead of vectors.
+The backend upserts each vector into Qdrant collection `visitor_faces`. The care PC does not embed enrollment photos on that path. FaceNet therefore runs in two places (enrollment service and care PC), which is why the conformance check above is mandatory.
 
-Both designs work. Only one of them needs a conformance test.
+Storing the JPEG and letting the care PC embed it would keep FaceNet in one place, but that is not what the worker does today. It only reads vectors.

@@ -35,9 +35,7 @@ Door camera / video file
    POST /api/v1/events   +   optional local JPEG snapshot
 ```
 
-Enrolled vectors come from either a local `gallery.pkl`
-(`scripts/enroll_faces.py`) or the backend (`--gallery-url`). The frame loop is
-identical either way.
+Enrolled vectors come from Qdrant (`--from-qdrant`, collection `visitor_faces`), a local `gallery.pkl` (`scripts/enroll_faces.py`), or the backend HTTP gallery (`--gallery-url`). The frame loop is identical either way. Qdrant is read once at startup, filtered by `patient_id`, then matched in memory.
 
 ---
 
@@ -48,7 +46,8 @@ identical either way.
 | `workers/face_worker.py` | Entrypoint: capture, overlay, logging, POST |
 | `face_cv/pipeline.py` | Detectors, FaceNet embedding, gallery matching |
 | `face_cv/live.py` | Streak + per-identity cooldown policy |
-| `face_cv/gallery_sync.py` | Fetch + cache enrolled vectors from the backend |
+| `face_cv/qdrant_gallery.py` | Scroll enrolled vectors from Qdrant and cache them |
+| `face_cv/gallery_sync.py` | Fetch + cache enrolled vectors from the HTTP gallery |
 | `face_cv/fmn_client.py` | HTTP POST client for the event API |
 | `scripts/enroll_faces.py` | Photos folder → local `gallery.pkl` |
 | `scripts/verify_embedding.py` | Prove two machines share an embedding space |
@@ -120,8 +119,10 @@ On a slow CPU, raise `--skip` before lowering accuracy anywhere else.
 | `--api-url URL` | FMN base URL for the event POST |
 | `--no-post` | Recognize and log only, no API call |
 | `--patient-id N` | Integer `patients.id` |
+| `--from-qdrant` | Load this patient's vectors from Qdrant (`URL` + `API_KEY` in `.env`) |
+| `--qdrant-collection NAME` | Collection override (default `visitor_faces`) |
 | `--gallery PATH` | Local `.pkl` or photo folder |
-| `--gallery-url URL` | Fetch enrolled vectors from the backend instead |
+| `--gallery-url URL` | Fetch enrolled vectors from the HTTP gallery instead |
 | `--detector mtcnn\|haar` | Must match enrollment |
 | `--threshold 0.675` | Override the match cutoff |
 | `--need 5` | Consecutive frames on one identity before firing |

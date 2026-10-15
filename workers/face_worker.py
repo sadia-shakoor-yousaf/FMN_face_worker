@@ -8,8 +8,9 @@ enrolled visitor gallery -> streak + cooldown -> POST to FMN event API.
   python workers/face_worker.py --source path/to/clip.mp4 --no-preview
   python workers/face_worker.py --cam 0 --no-post   # local log only
 
-Gallery comes from a local .pkl (scripts/enroll_faces.py) or, with
---gallery-url, from the FMN backend. See docs/VISITOR_GALLERY_API.md.
+Gallery comes from Qdrant (--from-qdrant), a local .pkl
+(scripts/enroll_faces.py), or, with --gallery-url, the FMN backend.
+See docs/VISITOR_GALLERY_API.md.
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ if str(ROOT) not in sys.path:
 from face_cv.camera import enumerate_named_cameras, open_camera, resolve_camera_index
 from face_cv.fmn_client import DEFAULT_BASE_URL, FmnClientError, post_event
 from face_cv.gallery_sync import GallerySyncError, cache_path, fetch_visitor_gallery
+from face_cv.qdrant_gallery import fetch_qdrant_gallery
 from face_cv.live import DEFAULT_COOLDOWN_S, DEFAULT_NEED, LiveFaceRecognizer
 from face_cv.pipeline import (
     DEFAULT_DETECTOR,
@@ -65,7 +67,29 @@ def _setup_log(log_dir: Path) -> logging.Logger:
 
 
 def _load_gallery(args: argparse.Namespace, log: logging.Logger):
-    """Backend sync if --gallery-url, else local file/folder. Cache is fallback."""
+    """Qdrant, backend sync, or local file. Remote loads fall back to cache."""
+    if args.from_qdrant and args.gallery_url:
+        raise RuntimeError("use either --from-qdrant or --gallery-url, not both")
+
+    if args.from_qdrant:
+        if not args.patient_id:
+            raise RuntimeError("--from-qdrant requires --patient-id")
+        try:
+            gallery, meta = fetch_qdrant_gallery(
+                patient_id=args.patient_id,
+                collection=args.qdrant_collection,
+                cache_dir=args.cache_dir,
+                allow_model_mismatch=args.allow_model_mismatch,
+            )
+            log.info(
+                "synced %d visitor(s) from Qdrant collection %s",
+                len(gallery),
+                meta.get("collection", args.qdrant_collection),
+            )
+            return gallery, meta
+        except GallerySyncError as e:
+            return _gallery_from_cache(args, log, e)
+
     if not args.gallery_url:
         return load_visitor_gallery(args.gallery, patient_id=args.patient_id)
 
@@ -87,11 +111,15 @@ def _load_gallery(args: argparse.Namespace, log: logging.Logger):
         )
         return gallery, meta
     except GallerySyncError as e:
-        cached = cache_path(args.cache_dir, args.patient_id)
-        if not cached.is_file():
-            raise RuntimeError(f"{e}\nno local cache at {cached}") from e
-        log.warning("sync failed (%s); falling back to cache %s", e, cached)
-        return load_visitor_gallery(cached, patient_id=args.patient_id)
+        return _gallery_from_cache(args, log, e)
+
+
+def _gallery_from_cache(args: argparse.Namespace, log: logging.Logger, error: Exception):
+    cached = cache_path(args.cache_dir, args.patient_id)
+    if not cached.is_file():
+        raise RuntimeError(f"{error}\nno local cache at {cached}") from error
+    log.warning("sync failed (%s); falling back to cache %s", error, cached)
+    return load_visitor_gallery(cached, patient_id=args.patient_id)
 
 
 def _draw_overlay(
@@ -195,6 +223,18 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_GALLERY,
         help="Enrolled visitors (.pkl from scripts/enroll_faces.py, or a photo folder)",
+    )
+    p.add_argument(
+        "--from-qdrant",
+        action="store_true",
+        help="Load enrolled embeddings from Qdrant (URL and API_KEY in .env) "
+        "instead of --gallery. Requires --patient-id.",
+    )
+    p.add_argument(
+        "--qdrant-collection",
+        type=str,
+        default=None,
+        help="Qdrant collection name (default visitor_faces, or QDRANT_COLLECTION)",
     )
     p.add_argument(
         "--gallery-url",

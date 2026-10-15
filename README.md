@@ -34,8 +34,8 @@ More detail:
 
 - [`docs/PIPELINE.md`](docs/PIPELINE.md) — recognition pipeline and design decisions
 - [`docs/EVENT_API.md`](docs/EVENT_API.md) — the event contract (shared with the fall worker)
-- [`docs/VISITOR_GALLERY_API.md`](docs/VISITOR_GALLERY_API.md) — **the one endpoint we need from the backend**
-- [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDING_CONTRACT.md) — required only if the backend generates vectors
+- [`docs/VISITOR_GALLERY_API.md`](docs/VISITOR_GALLERY_API.md) — where enrolled vectors live (Qdrant, or the older HTTP endpoint)
+- [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDING_CONTRACT.md) — required: the backend generates the vectors it uploads to Qdrant
 
 ---
 
@@ -57,7 +57,7 @@ FMN_face_worker/
 ├── README.md
 ├── requirements.txt              # worker runtime (pinned — see note below)
 ├── requirements-mock.txt         # + FastAPI mock server
-├── face_cv/                      # detectors, FaceNet, matching, sync, HTTP client
+├── face_cv/                      # detectors, FaceNet, matching, Qdrant + HTTP sync
 ├── workers/face_worker.py        # main entrypoint
 ├── scripts/capture_enrollment.py # webcam → enrollment photos
 ├── scripts/enroll_faces.py       # photos → local gallery.pkl
@@ -190,25 +190,24 @@ string argument, so the next flag gets eaten instead.
 ## Test against the **real** FMN backend
 
 1. Implement `POST /api/v1/events` per [`docs/EVENT_API.md`](docs/EVENT_API.md).
-2. Implement `GET /api/v1/patients/{id}/visitors` per [`docs/VISITOR_GALLERY_API.md`](docs/VISITOR_GALLERY_API.md).
-3. Use a real patient integer id from your DB.
-4. Point the worker at your API (base URL only — the worker appends the paths):
+2. Enroll visitors by upserting FaceNet vectors into the Qdrant collection `visitor_faces` (see [`docs/VISITOR_GALLERY_API.md`](docs/VISITOR_GALLERY_API.md)). The worker does not read photos.
+3. Put the cluster URL and API key in `.env` (`URL` and `API_KEY`, or `QDRANT_URL` and `QDRANT_API_KEY`). `.env` is gitignored.
+4. Use a real patient integer id. That id must match the `patient_id` payload on the Qdrant points.
+5. Point the worker at Qdrant for the gallery and at the API for events:
 
 ```bash
 python workers/face_worker.py ^
   --api-url https://YOUR_API_HOST ^
-  --gallery-url https://YOUR_API_HOST ^
-  --patient-id 1 ^
+  --from-qdrant ^
+  --patient-id 39 ^
   --no-preview
 ```
 
 (macOS/Linux: use `\` line continuations instead of `^`.)
 
-Confirm a new `activity_logs` row: `type = visitor_recognized`,
-`source = door_cam`, `label = <visitor name>`.
+On startup the log should say `synced N visitor(s) from Qdrant collection visitor_faces`. Confirm a new `activity_logs` row: `type = visitor_recognized`, `source = door_cam`, `label = <visitor name>`.
 
-Omit `--gallery-url` to keep using the local gallery while their endpoint is
-still being built.
+`--gallery-url` still fetches the older `GET /api/v1/patients/{id}/visitors` endpoint. Omit both `--from-qdrant` and `--gallery-url` to keep using the local `gallery.pkl`.
 
 ---
 
@@ -219,14 +218,12 @@ touching the frame loop:
 
 | Source | Flag | Use |
 | --- | --- | --- |
+| Qdrant Cloud `visitor_faces` | `--from-qdrant` | Caregivers enrol in the app; the backend upserts vectors |
 | Local `gallery.pkl` | `--gallery` (default) | Development, demos, offline |
 | Photo folder | `--gallery data/faces/gallery` | Re-embed on the spot |
-| FMN backend | `--gallery-url https://host` | Production; caregivers enrol in the app |
+| FMN HTTP gallery | `--gallery-url https://host` | Older path: `GET /api/v1/patients/{id}/visitors` |
 
-The backend path caches vectors under `data/faces/`, so a restart during a
-network outage still recognizes people. If the backend reports a different
-`embedding_model` than this worker matches, the sync **fails loudly** instead of
-silently accepting strangers — see [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDING_CONTRACT.md).
+`--from-qdrant` needs `--patient-id`. It scrolls that patient's points once at startup (not per frame), holds them in memory, and caches them under `data/faces/visitors_patient_<id>.pkl` so a restart during an outage still recognizes people. A mismatched `embedding_model` **fails the sync** instead of silently accepting strangers — see [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDING_CONTRACT.md).
 
 ---
 
@@ -236,9 +233,11 @@ silently accepting strangers — see [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDI
 | --- | --- | --- |
 | `--api-url` | `https://api...` | Base URL for the event POST |
 | `--no-post` | | Recognize and log only, no API call |
-| `--patient-id` | `1` | Required for POST |
+| `--patient-id` | `39` | Required for POST and for `--from-qdrant` |
+| `--from-qdrant` | | Load enrolled vectors from Qdrant (`.env`) |
+| `--qdrant-collection` | `visitor_faces` | Override the collection name |
 | `--gallery` | `data/faces/gallery.pkl` | Local enrolled visitors |
-| `--gallery-url` | `https://api...` | Fetch enrolled vectors from the backend |
+| `--gallery-url` | `https://api...` | Fetch enrolled vectors from the HTTP gallery |
 | `--detector` | `mtcnn` / `haar` | **Must match enrollment** |
 | `--threshold` | `0.675` | Match cutoff (default comes from the gallery) |
 | `--need` | `5` | Consecutive frames on one identity before firing |
