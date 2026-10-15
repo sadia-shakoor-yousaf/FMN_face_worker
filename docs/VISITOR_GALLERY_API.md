@@ -1,24 +1,67 @@
-# Visitor Gallery API — what the face worker needs from the backend
+# Visitor gallery — where enrolled embeddings live
 
 **Caller:** care-PC face worker (this repo)
-**Direction:** worker reads. This is the only endpoint the worker needs *besides*
-`POST /api/v1/events`.
-**Status:** not implemented yet. A working stand-in ships in `mock_api/app.py`.
+**Current path:** Qdrant Cloud. The backend generates FaceNet vectors at enrollment and upserts them. The worker reads them with `--from-qdrant`.
+**Older path:** `GET /api/v1/patients/{patient_id}/visitors`, still supported by `--gallery-url`. A stand-in ships in `mock_api/app.py`.
+
+Events are unchanged: the worker still only POSTs `POST /api/v1/events`. It never uploads photos.
 
 ---
 
-## Why this exists
+## Qdrant (what the backend is building)
 
-Caregivers enrol visitors **in the app**, not on the care PC. Nobody SSHes into
-a patient's living room to drop JPEGs in a folder. So the enrolled faces start
-their life on your side and have to reach the worker.
+The collection already exists. Do not create a second one.
 
-The worker fetches this list at startup, holds it in memory, caches it to disk
-(so a restart during an outage still works), and re-fetches periodically — so a
-visitor enrolled at 3:00pm is recognized by 3:05pm without anyone restarting
-anything.
+| | |
+| --- | --- |
+| Collection | `visitor_faces` |
+| Vector size | 512 |
+| Distance | Cosine |
+| Credentials | `URL` + `API_KEY` in `.env` (aliases: `QDRANT_URL`, `QDRANT_API_KEY`). Optional `QDRANT_COLLECTION`. |
 
-The worker does **not** query this endpoint per video frame. Once per sync.
+One enrolled photo is one point. Generate the vector with the path in [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md). Do not use Qdrant's built-in embedding models.
+
+```python
+client.upsert(
+    collection_name="visitor_faces",
+    points=[{
+        "id": "<stable id per photo, so a re-upload replaces it>",
+        "vector": ["...512 floats, L2-normalized..."],
+        "payload": {
+            "patient_id": 39,
+            "name": "ammi",
+            "relation": "daughter",
+            "embedding_model": "keras-facenet-0.3.2",
+            "source_file": "10.jpg",
+        },
+    }],
+)
+```
+
+| Payload field | Rules |
+| --- | --- |
+| `patient_id` | Integer `patients.id`. Indexed. The worker filters on this. |
+| `name` | The label that goes into the event. Required. |
+| `relation` | Optional, display only |
+| `embedding_model` | Must be `keras-facenet-0.3.2`. A mismatch aborts the sync. |
+| `source_file` | Optional photo name |
+
+The worker scrolls this patient's points once at startup, groups them by `name`, and matches in memory. It does not query Qdrant per frame. A successful fetch is cached to `data/faces/visitors_patient_<id>.pkl`.
+
+```bash
+python workers/face_worker.py --cam 0 --patient-id 39 --from-qdrant --api-url https://YOUR_API_HOST
+```
+
+---
+
+## HTTP gallery (older path)
+
+**Direction:** worker reads, if started with `--gallery-url`.
+**Status:** not the path enrollment is using. Kept so a backend that serves vectors over HTTP still works.
+
+### Why this exists
+
+Caregivers enrol visitors **in the app**, not on the care PC. This endpoint was the original way to hand those vectors to the worker. The worker fetches the list at startup, holds it in memory, and caches it to disk. It does not query this endpoint per video frame. A visitor enrolled after the worker has started is picked up on the next launch.
 
 ---
 

@@ -24,7 +24,8 @@ machine.
 2. The largest face in the frame is detected and cropped.
 3. The crop becomes a 512-d FaceNet embedding.
 4. That embedding is compared by cosine similarity against the patient's
-   enrolled visitors (see `VISITOR_GALLERY_API.md`).
+   enrolled visitors, loaded at startup from Qdrant (`--from-qdrant`) or from
+   the HTTP gallery (see `VISITOR_GALLERY_API.md`).
 5. Best score **≥ threshold** → that visitor. Below → unknown.
 6. We require **persistence** (several consecutive frames agreeing) plus a
    per-identity **cooldown**, so one visit produces one event and not fifty.
