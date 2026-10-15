@@ -117,6 +117,7 @@ Easiest route — capture straight from the camera the worker will watch:
 
 ```bash
 python scripts/capture_enrollment.py --name your_name
+# uses the USB/JLC webcam by default (not the laptop camera)
 ```
 
 It saves only frames where a face is detected. Move a little between shots:
@@ -166,14 +167,16 @@ python scripts/smoke_post.py --api-url http://127.0.0.1:5155 --patient-id 1 --ty
 ### 3) Run the worker
 
 ```bash
-# live webcam
-python workers/face_worker.py --cam 0 --api-url http://127.0.0.1:5155 --patient-id 1
+# live webcam (auto-picks USB/JLC 1080p, not the laptop camera)
+python workers/face_worker.py --api-url http://127.0.0.1:5155 --patient-id 1
+python workers/face_worker.py --list-cams
+python workers/face_worker.py --cam 1 --api-url http://127.0.0.1:5155 --patient-id 1
 
 # video file, headless
 python workers/face_worker.py --source path/to/clip.mp4 --no-preview --api-url http://127.0.0.1:5155 --patient-id 1
 
 # local only, no POST
-python workers/face_worker.py --cam 0 --no-post
+python workers/face_worker.py --no-post
 ```
 
 On an event you should see `POST visitor_recognized ok id=...` in the log. Mock
@@ -193,7 +196,6 @@ string argument, so the next flag gets eaten instead.
 
 ```bash
 python workers/face_worker.py ^
-  --cam 0 ^
   --api-url https://YOUR_API_HOST ^
   --gallery-url https://YOUR_API_HOST ^
   --patient-id 1 ^
@@ -242,7 +244,7 @@ silently accepting strangers — see [`docs/EMBEDDING_CONTRACT.md`](docs/EMBEDDI
 | `--need` | `5` | Consecutive frames on one identity before firing |
 | `--cooldown` | `120` | Seconds before the same identity fires again |
 | `--source` | `clip.mp4` | Offline demo |
-| `--cam` | `0` | Webcam index |
+| `--cam` | auto USB/JLC | Webcam index (`1` = USB 2.0 Camera on this PC) |
 | `--skip` | `3` | Every Nth frame (help slow CPUs) |
 | `--no-preview` | | Headless |
 | `--no-snapshot` | | Don't write visitor JPEGs |

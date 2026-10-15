@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from face_cv.camera import open_camera, resolve_camera_index
 from face_cv.pipeline import DEFAULT_DETECTOR, get_detector
 
 DEFAULT_OUT_DIR = ROOT / "data" / "faces" / "gallery"
@@ -47,7 +48,18 @@ def parse_args() -> argparse.Namespace:
         default=1.5,
         help="Minimum seconds between saved photos, so they differ",
     )
-    p.add_argument("--cam", type=int, default=0, help="USB camera index")
+    p.add_argument(
+        "--cam",
+        type=int,
+        default=None,
+        help="Camera index. Default: USB/JLC webcam (not the laptop camera).",
+    )
+    p.add_argument(
+        "--cam-name",
+        type=str,
+        default=None,
+        help='Substring of the device name, e.g. "USB 2.0" or "JLC"',
+    )
     p.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     p.add_argument(
         "--detector",
@@ -68,10 +80,16 @@ def main() -> int:
         print(f"note: {person_dir} already has {len(existing)} photo(s); adding more")
 
     detector = get_detector(args.detector)
-    cap = cv2.VideoCapture(args.cam)
-    if not cap.isOpened():
-        print(f"FAIL: cannot open camera {args.cam}", file=sys.stderr)
+    try:
+        cam_index, cam_label = resolve_camera_index(args.cam, args.cam_name)
+    except RuntimeError as e:
+        print(f"FAIL: {e}", file=sys.stderr)
         return 1
+    cap = open_camera(cam_index)
+    if not cap.isOpened():
+        print(f"FAIL: cannot open camera {cam_index} ({cam_label})", file=sys.stderr)
+        return 1
+    print(f"camera {cam_index}: {cam_label}")
 
     print(f"saving to {person_dir}")
     print(f"target: {args.count} photos. Press q or Esc to stop early.\n")

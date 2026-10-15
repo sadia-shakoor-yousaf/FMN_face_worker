@@ -32,7 +32,7 @@ from face_cv.pipeline import (
 
 DEFAULT_PHOTOS_DIR = ROOT / "data" / "faces" / "gallery"
 DEFAULT_OUT = ROOT / "data" / "faces" / "gallery.pkl"
-MIN_PHOTOS = 3
+MIN_PHOTOS = 1
 
 
 def main() -> int:
