@@ -187,3 +187,41 @@ curl http://127.0.0.1:5155/api/v1/patients/1/visitors
 ```
 
 Compare your response shape against that.
+
+---
+
+## Voice collection
+
+Same cloud, a different collection. The face worker searches it when a face has
+already stayed unknown and someone speaks. It does not download the points into
+a file, and it does not upload the audio.
+
+The collection is created in Qdrant Cloud (192-d, Cosine). The API still refuses to create collections on its own.
+
+| | |
+| --- | --- |
+| Collection | `visitor_voices` |
+| Vector size | 192 |
+| Distance | Cosine |
+| Model | `speechbrain/spkrec-ecapa-voxceleb` (ECAPA-TDNN). One clip, 16 kHz mono, L2-normalized. The care PC uses this exact model for the live clip (`face_cv/speaker_embed.py`). A different speaker model will not match. |
+
+One enrolled clip is one point. A re-enrollment of the same clip must reuse the point id so it replaces the old vector.
+
+```python
+client.upsert(
+    collection_name="visitor_voices",
+    points=[{
+        "id": "<stable id per clip>",
+        "vector": ["...192 floats, L2-normalized..."],
+        "payload": {
+            "patient_id": 39,
+            "name": "ammi",
+            "relationship": "daughter",
+            "visitor_id": "<visitor uuid>",
+            "embedding_model": "speechbrain/spkrec-ecapa-voxceleb",
+        },
+    }],
+)
+```
+
+`patient_id` is the integer `patients.id`, same as face points. `name` is the label the worker puts on `visitor_recognized`. `relationship` is required on every point (daughter, doctor, and so on), same key the face points already use. The worker keeps the hit only when the cosine score is at least 0.25 and `embedding_model` is the string above.

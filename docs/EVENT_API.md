@@ -139,7 +139,14 @@ FCM / UI reactions are out of scope for this contract — use your existing
 
 ## Out of scope for this endpoint
 
-- Uploading face images or snapshots
-- Running recognition models on the server for live frames
+- Uploading face images, voice clips, or snapshots
+- Running face or speaker models on the server for the live door
+- A match route of any kind. The care PC already decided.
 - Specifying FCM payload details
 - `GET /api/v1/events` (mock-only helper in this repo)
+
+Enrolled voice vectors live in Qdrant collection `visitor_voices`. The care PC
+embeds the live clip and searches that collection. The only payload you receive
+for that visit is the one visitor event above. Do not log a second
+`speaker_recognized` / `speaker_unknown` row for it. `/voice/recognize` remains
+the existing phone test route; this worker does not call it.

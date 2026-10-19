@@ -11,6 +11,7 @@ Thumbs.db
 # (Excluding a directory outright stops git descending into it, so the
 # placeholder has to be re-included level by level.)
 data/faces/*
+data/voice/*
 !data/faces/gallery/
 data/faces/gallery/*
 !data/faces/gallery/.gitkeep

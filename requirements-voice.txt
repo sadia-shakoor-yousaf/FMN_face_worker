@@ -1,0 +1,9 @@
+# Voice fallback only. Install into the same .venv AFTER requirements.txt.
+# Do not upgrade numpy or TensorFlow while installing these.
+#
+#   .venv\Scripts\python.exe -m pip install -r requirements-voice.txt
+#
+torch>=2.0
+speechbrain>=1.0.0
+huggingface_hub>=0.20
+soundfile>=0.12

@@ -2,7 +2,8 @@
 Care-PC face worker (door camera).
 
 Camera -> detect largest face -> FaceNet embedding -> cosine match against the
-enrolled visitor gallery -> streak + cooldown -> POST to FMN event API.
+enrolled visitor gallery. A known face posts immediately. An unknown face is
+held, then the mic gets one chance to name them, and one visitor event is posted.
 
   python workers/face_worker.py --cam 0 --patient-id 1
   python workers/face_worker.py --source path/to/clip.mp4 --no-preview
@@ -30,9 +31,21 @@ if str(ROOT) not in sys.path:
 
 from face_cv.camera import enumerate_named_cameras, open_camera, resolve_camera_index
 from face_cv.fmn_client import DEFAULT_BASE_URL, FmnClientError, post_event
+from face_cv.mic import Ear, SpeechMatched, SpeechStarted
+from face_cv.speech import write_wav
 from face_cv.gallery_sync import GallerySyncError, cache_path, fetch_visitor_gallery
+from face_cv.speakers import DEFAULT_SPEAKER_THRESHOLD, VOICE_COLLECTION
+from face_cv.voice_qdrant import count_voices
 from face_cv.qdrant_gallery import fetch_qdrant_gallery
-from face_cv.live import DEFAULT_COOLDOWN_S, DEFAULT_NEED, LiveFaceRecognizer
+from face_cv.visit import (
+    DEFAULT_COOLDOWN_S,
+    DEFAULT_DROPOUT_S,
+    DEFAULT_NEED,
+    DEFAULT_UNKNOWN_HOLD_S,
+    DEFAULT_VOICE_WAIT_S,
+    VisitDecider,
+    VisitStep,
+)
 from face_cv.pipeline import (
     DEFAULT_DETECTOR,
     DEFAULT_THRESHOLD,
@@ -114,6 +127,31 @@ def _load_gallery(args: argparse.Namespace, log: logging.Logger):
         return _gallery_from_cache(args, log, e)
 
 
+def _log_voices(args: argparse.Namespace, log: logging.Logger) -> None:
+    """Confirm Qdrant has this patient's voice points. Matching happens later."""
+    if args.no_voice:
+        return
+    if not args.patient_id:
+        log.warning("voice match needs --patient-id; speech will not name anyone")
+        return
+    try:
+        n = count_voices(patient_id=args.patient_id, collection=args.voice_collection)
+    except GallerySyncError as e:
+        log.warning(
+            "voice collection %s is not readable (%s); speech will not name anyone",
+            args.voice_collection,
+            e,
+        )
+        return
+    log.info(
+        "voices: %d point(s) in Qdrant %s for patient %s threshold=%.3f",
+        n,
+        args.voice_collection,
+        args.patient_id,
+        args.voice_threshold,
+    )
+
+
 def _gallery_from_cache(args: argparse.Namespace, log: logging.Logger, error: Exception):
     cached = cache_path(args.cache_dir, args.patient_id)
     if not cached.is_file():
@@ -128,8 +166,7 @@ def _draw_overlay(
     box: tuple[int, int, int, int] | None,
     name: str | None,
     score: float,
-    run: int,
-    need: int,
+    status: str,
     fps: float,
     event: bool,
 ) -> np.ndarray:
@@ -151,8 +188,7 @@ def _draw_overlay(
                 2,
             )
 
-    status = name if name is not None else "no face"
-    lines = [f"face: {status}  streak {run}/{need}", f"FPS: {fps:.1f}"]
+    lines = [status, f"FPS: {fps:.1f}"]
     y = 28
     for line in lines:
         cv2.putText(out, line, (12, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
@@ -170,6 +206,129 @@ def _draw_overlay(
             3,
         )
     return out
+
+
+def _status_line(decider: VisitDecider, *, name: str | None, now_s: float) -> str:
+    face = name if name is not None else "no face"
+    if decider.phase == "listen":
+        waited = decider.listen_elapsed(now_s)
+        return f"listening for speech {waited:.0f}/{decider.voice_wait_s:.0f}s  face: {face}"
+    unknown_for = decider.unknown_elapsed(now_s)
+    if unknown_for > 0:
+        return (
+            f"face unknown {unknown_for:.0f}/{decider.unknown_hold_s:.0f}s  "
+            f"streak {decider.consecutive_hits}/{decider.need}"
+        )
+    return f"face: {face}  streak {decider.consecutive_hits}/{decider.need}"
+
+
+def _publish_visit(
+    step: VisitStep,
+    *,
+    frame: np.ndarray,
+    now_s: float,
+    args: argparse.Namespace,
+    api_url: str,
+    post_enabled: bool,
+    ear: Ear,
+    log: logging.Logger,
+    flash_until: float,
+) -> float:
+    if step.start_listen:
+        log.info("face unknown long enough; opening microphone")
+        ear.start()
+    if step.event is not None:
+        event = step.event
+        event_type = "visitor_recognized" if event.known else "visitor_unknown"
+        confidence = to_confidence(event.confidence)
+        if event.via == "silence":
+            log.info("voice wait ended with no speech")
+        log.warning(
+            "VISITOR %s name=%s score=%.3f via=%s patient_id=%s",
+            event_type,
+            event.name,
+            event.confidence,
+            event.via,
+            args.patient_id or "(none)",
+        )
+        if not args.no_snapshot:
+            shot = args.log_dir / (
+                f"visitor_{time.strftime('%Y%m%d_%H%M%S')}_{event.name}.jpg"
+            )
+            cv2.imwrite(str(shot), frame)
+            log.info("snapshot saved: %s", shot)
+        if post_enabled and args.patient_id:
+            try:
+                posted = post_event(
+                    api_url,
+                    patient_id=args.patient_id,
+                    event_type=event_type,
+                    label=event.name,
+                    confidence=confidence,
+                    source="door_cam",
+                )
+                log.info("POST %s ok id=%s", event_type, posted.get("id", "?"))
+            except FmnClientError as e:
+                log.warning("POST %s failed: %s", event_type, e)
+        flash_until = now_s + 2.0
+    if step.stop_listen:
+        ear.stop()
+    return flash_until
+
+
+def _clip_label(name: str) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in name.strip())
+    return safe or "nomatch"
+
+
+def _write_voice_clip(note: SpeechMatched, log_dir: Path, log: logging.Logger) -> Path | None:
+    audio = note.audio
+    if audio is None or int(audio.size) == 0 or note.sample_rate <= 0:
+        return None
+    label = _clip_label(note.match.name) if note.match.matched else "nomatch"
+    path = log_dir / f"voice_{time.strftime('%Y%m%d_%H%M%S')}_{label}.wav"
+    try:
+        write_wav(path, audio, note.sample_rate)
+    except OSError as e:
+        log.warning("voice clip not saved: %s", e)
+        return None
+    return path
+
+
+def _poll_ear(
+    ear: Ear,
+    decider: VisitDecider,
+    log: logging.Logger,
+    args: argparse.Namespace,
+) -> VisitStep:
+    step = VisitStep()
+    now = time.perf_counter()
+    for note in ear.poll():
+        if isinstance(note, SpeechStarted):
+            decider.note_speech(now)
+            log.info("speech started; matching a short clip")
+        elif isinstance(note, SpeechMatched):
+            found = note.match
+            clip = None if args.no_snapshot else _write_voice_clip(note, args.log_dir, log)
+            samples = 0 if note.audio is None else int(note.audio.size)
+            log.warning(
+                "VOICE matched=%s name=%s score=%.3f relationship=%s threshold=%.3f "
+                "samples=%d clip=%s",
+                found.matched,
+                found.name or "(none)",
+                found.confidence,
+                found.relationship or "(none)",
+                args.voice_threshold,
+                samples,
+                clip or "(not saved)",
+            )
+            step = decider.resolve_voice(
+                matched=found.matched,
+                name=found.name,
+                confidence=found.confidence,
+                now_s=now,
+            )
+    return step
 
 
 def parse_args() -> argparse.Namespace:
@@ -274,6 +433,47 @@ def parse_args() -> argparse.Namespace:
         help="Seconds before the same identity can fire again",
     )
     p.add_argument(
+        "--unknown-hold",
+        type=float,
+        default=DEFAULT_UNKNOWN_HOLD_S,
+        help="Seconds an unknown face must stay unknown before the mic opens",
+    )
+    p.add_argument(
+        "--voice-wait",
+        type=float,
+        default=DEFAULT_VOICE_WAIT_S,
+        help="Seconds to wait for speech to start after the face gives up",
+    )
+    p.add_argument(
+        "--dropout",
+        type=float,
+        default=DEFAULT_DROPOUT_S,
+        help="Face gap, in seconds, that does not reset the unknown clock",
+    )
+    p.add_argument(
+        "--no-voice",
+        action="store_true",
+        help="Post the unknown visitor when the face hold ends, without the mic",
+    )
+    p.add_argument(
+        "--speech-rms",
+        type=float,
+        default=0.02,
+        help="Mic energy that counts as speech starting",
+    )
+    p.add_argument(
+        "--voice-collection",
+        type=str,
+        default=VOICE_COLLECTION,
+        help=f"Qdrant collection of enrolled voice vectors (default {VOICE_COLLECTION})",
+    )
+    p.add_argument(
+        "--voice-threshold",
+        type=float,
+        default=DEFAULT_SPEAKER_THRESHOLD,
+        help=f"Speaker cosine cutoff returned by Qdrant (default {DEFAULT_SPEAKER_THRESHOLD})",
+    )
+    p.add_argument(
         "--skip",
         type=int,
         default=3,
@@ -340,7 +540,22 @@ def main() -> int:
             enrolled_with,
         )
 
-    recognizer = LiveFaceRecognizer(need=args.need, cooldown_s=args.cooldown)
+    decider = VisitDecider(
+        need=args.need,
+        cooldown_s=args.cooldown,
+        unknown_hold_s=args.unknown_hold,
+        voice_wait_s=args.voice_wait,
+        dropout_s=args.dropout,
+        voice=not args.no_voice,
+    )
+    _log_voices(args, log)
+    ear = Ear(
+        patient_id=args.patient_id,
+        threshold=args.voice_threshold,
+        collection=args.voice_collection,
+        log=log,
+        rms_threshold=args.speech_rms,
+    )
 
     cam_label = None
     if args.source is not None:
@@ -365,13 +580,17 @@ def main() -> int:
     skip = max(int(args.skip), 1)
     log.info(
         "start source=%s patient_id=%s people=%d threshold=%.3f need=%s "
-        "cooldown=%.0fs detector=%s skip=%s preview=%s api_url=%s",
+        "cooldown=%.0fs unknown_hold=%.0fs voice_wait=%.0fs voice=%s "
+        "detector=%s skip=%s preview=%s api_url=%s",
         source,
         args.patient_id or "(none)",
         len(gallery),
         threshold,
         args.need,
         args.cooldown,
+        args.unknown_hold,
+        args.voice_wait,
+        not args.no_voice,
         args.detector,
         skip,
         not args.no_preview,
@@ -408,44 +627,26 @@ def main() -> int:
                 name, score = identify(embed_face(face), gallery, threshold)
 
             now = time.perf_counter()
-            event = recognizer.push(name, score, now_s=now)
-
             n_proc += 1
             inst = 1.0 / max(time.perf_counter() - t_frame, 1e-6)
             fps_ema = inst if fps_ema <= 0 else (0.9 * fps_ema + 0.1 * inst)
 
-            if event is not None:
-                flash_until = now + 2.0
-                event_type = (
-                    "visitor_recognized" if event.known else "visitor_unknown"
-                )
-                confidence = to_confidence(event.confidence)
-                log.warning(
-                    "VISITOR %s name=%s score=%.3f patient_id=%s",
-                    event_type,
-                    event.name,
-                    event.confidence,
-                    args.patient_id or "(none)",
-                )
-                if not args.no_snapshot:
-                    shot = args.log_dir / (
-                        f"visitor_{time.strftime('%Y%m%d_%H%M%S')}_{event.name}.jpg"
-                    )
-                    cv2.imwrite(str(shot), frame)
-                    log.info("snapshot saved: %s", shot)
-                if post_enabled and args.patient_id:
-                    try:
-                        posted = post_event(
-                            api_url,
-                            patient_id=args.patient_id,
-                            event_type=event_type,
-                            label=event.name,
-                            confidence=confidence,
-                            source="door_cam",
-                        )
-                        log.info("POST %s ok id=%s", event_type, posted.get("id", "?"))
-                    except FmnClientError as e:
-                        log.warning("POST %s failed: %s", event_type, e)
+            publish = dict(
+                frame=frame,
+                now_s=now,
+                args=args,
+                api_url=api_url,
+                post_enabled=post_enabled,
+                ear=ear,
+                log=log,
+            )
+            flash_until = _publish_visit(decider.push(name, score, now), flash_until=flash_until, **publish)
+            flash_until = _publish_visit(
+                _poll_ear(ear, decider, log, args),
+                flash_until=flash_until,
+                **publish,
+            )
+            flash_until = _publish_visit(decider.tick(now), flash_until=flash_until, **publish)
 
             if not args.no_preview:
                 vis = _draw_overlay(
@@ -453,8 +654,7 @@ def main() -> int:
                     box=box,
                     name=name,
                     score=score,
-                    run=recognizer.consecutive_hits,
-                    need=args.need,
+                    status=_status_line(decider, name=name, now_s=now),
                     fps=fps_ema,
                     event=now < flash_until,
                 )
@@ -468,6 +668,7 @@ def main() -> int:
                 log.info("hit --max-frames=%s", args.max_frames)
                 break
     finally:
+        ear.stop()
         cap.release()
         if not args.no_preview:
             cv2.destroyAllWindows()

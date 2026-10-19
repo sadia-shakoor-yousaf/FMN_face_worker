@@ -22,8 +22,11 @@ Door camera / video
   → face detector (largest face)
   → FaceNet 512-d embedding
   → cosine match vs enrolled visitors
-  → streak + cooldown
-  → POST /api/v1/events  { visitor_recognized | visitor_unknown, patient_id, ... }
+  → known face: short streak, then one visitor_recognized
+  → unknown face for 10s: mic waits up to 30s for speech to start
+       speech matches  → one visitor_recognized
+       no speech / no match → one visitor_unknown
+  → POST /api/v1/events
 ```
 
 - **Camera frames stay on the care PC.** Only the event JSON is sent.
@@ -248,7 +251,7 @@ touching the frame loop:
 | `--no-preview` | | Headless |
 | `--no-snapshot` | | Don't write visitor JPEGs |
 
-Logs and snapshots land in `data/live_logs/`.
+Logs, face snapshots, and voice clips land in `data/live_logs/`.
 
 ---
 

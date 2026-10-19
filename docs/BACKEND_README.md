@@ -37,6 +37,12 @@ This is the **same endpoint** the fall worker already uses. If `fall_detected`
 works, you mostly need to accept two more `type` values plus
 `source: door_cam`. Full field list: [`EVENT_API.md`](EVENT_API.md).
 
+Voice is not a second HTTP request. When a face stays unknown, the care PC
+embeds the speech and searches Qdrant collection `visitor_voices`. You still
+receive one visitor event. Do not add a route that accepts audio, and do not
+log a separate speaker event for this path. `/voice/recognize` stays the phone
+test route; the door worker does not call it.
+
 ---
 
 ## The part that is genuinely new
@@ -44,7 +50,9 @@ works, you mostly need to accept two more `type` values plus
 Falls need no data from you. Visitors do — the worker has to know *who* is
 enrolled, and families enrol people **in the app**, not on the care PC.
 
-Enrollment writes vectors to **Qdrant Cloud**, collection `visitor_faces` (512 dimensions, Cosine). The care PC loads them with `--from-qdrant`. Contract: [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md) and [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md).
+Enrollment writes face vectors to **Qdrant Cloud**, collection `visitor_faces` (512 dimensions, Cosine). The care PC loads them with `--from-qdrant`. Contract: [`VISITOR_GALLERY_API.md`](VISITOR_GALLERY_API.md) and [`EMBEDDING_CONTRACT.md`](EMBEDDING_CONTRACT.md).
+
+Voice enrollment writes a second collection, `visitor_voices` (192 dimensions, Cosine). The care PC does not keep a local copy. It embeds the live clip and searches that collection. Same document, section "Voice collection".
 
 You generate the vectors. Two things are mandatory:
 
@@ -281,7 +289,7 @@ Stand in front of the camera as someone **not** enrolled and you should get
 If POST fails, the worker **keeps running** and only prints a warning. Fix the
 API and try again.
 
-Local snapshots (not uploaded) appear under `data/live_logs/`.
+Local snapshots and voice clips (not uploaded) appear under `data/live_logs/`.
 
 ---
 
@@ -289,6 +297,9 @@ Local snapshots (not uploaded) appear under `data/live_logs/`.
 
 - [ ] `POST /api/v1/events` accepts `visitor_recognized` and `visitor_unknown`
 - [ ] `source` enum accepts `door_cam`
+- [ ] No new voice HTTP route. The worker does not upload audio.
+- [x] Qdrant collection `visitor_voices` exists: 192 dimensions, Cosine. Do not create another one. The API will not create collections.
+- [ ] Each enrolled voice clip is one point in that collection: `patient_id` (int), `name`, `relationship`, `embedding_model` = `speechbrain/spkrec-ecapa-voxceleb`, L2-normalized 192-d vector
 - [ ] `patient_id` accepted as **integer**
 - [ ] Valid event → insert `activity_logs` → `201` + created row
 - [ ] `smoke_post.py` succeeds against your server for both visitor types

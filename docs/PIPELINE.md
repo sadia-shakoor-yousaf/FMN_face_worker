@@ -25,13 +25,23 @@ Door camera / video file
         ▼
    best ≥ threshold (0.675) ? visitor name : "unknown"
         │
-        ▼
-   NEED consecutive frames on the same identity (default 5)
+        ├─ known: NEED consecutive frames (default 5) ──► visitor_recognized
         │
-        ▼
-   Per-identity cooldown (default 120s) ──► skip duplicate events
-        │
-        ▼
+        └─ unknown for 10s (a gap under 1s does not reset the clock)
+                │
+                ▼
+           Mic opens. Wait up to 30s for speech to *start*.
+           The care PC embeds those few seconds and asks Qdrant
+           collection visitor_voices for the nearest enrolled voice.
+           Audio is not uploaded. The clip is saved under data/live_logs/
+           next to the snapshot (voice_*.wav) so the match can be replayed.
+                │
+                ├─ voice names them ──► visitor_recognized
+                ├─ speech, no match ──► visitor_unknown
+                └─ nobody speaks ────► visitor_unknown
+
+   If the face becomes known during the wait, the face wins and the mic closes.
+   One event, then cooldown (default 120s) until that face has left.
    POST /api/v1/events   +   optional local JPEG snapshot
 ```
 
@@ -45,7 +55,13 @@ Enrolled vectors come from Qdrant (`--from-qdrant`, collection `visitor_faces`),
 | --- | --- |
 | `workers/face_worker.py` | Entrypoint: capture, overlay, logging, POST |
 | `face_cv/pipeline.py` | Detectors, FaceNet embedding, gallery matching |
-| `face_cv/live.py` | Streak + per-identity cooldown policy |
+| `face_cv/visit.py` | Face-first visit decision, including the voice wait |
+| `face_cv/speech.py` | Energy gate: wait for speech, then a short clip |
+| `face_cv/mic.py` | Microphone session, opened only for that wait |
+| `face_cv/speakers.py` | Turn one Qdrant voice hit into a name or a miss |
+| `face_cv/speaker_embed.py` | ECAPA embedding of the live clip, care PC only |
+| `face_cv/voice_qdrant.py` | Search Qdrant collection `visitor_voices` |
+| `face_cv/live.py` | Older streak helper. The worker decides in `visit.py` |
 | `face_cv/qdrant_gallery.py` | Scroll enrolled vectors from Qdrant and cache them |
 | `face_cv/gallery_sync.py` | Fetch + cache enrolled vectors from the HTTP gallery |
 | `face_cv/fmn_client.py` | HTTP POST client for the event API |
@@ -81,6 +97,16 @@ at the door produce one event, for the larger face.
 Without them, a visitor standing in frame for ten seconds generates one event
 per processed frame. The caregiver would get dozens of notifications for one
 visit.
+
+**Why does an unknown face wait, then listen?**
+A known face still announces on the short streak. Voice runs only after the
+face has been unknown for about 10 seconds, and only long enough for someone
+to start talking (about 30 seconds). The model scores a few seconds of that
+speech, not a half-minute recording. Silence at the end of the wait is still
+an unknown visitor: the face already failed. One event is posted either way.
+The live clip is embedded on the care PC. The enrolled vectors are in Qdrant
+`visitor_voices`, and the nearest-neighbor score comes from that search.
+The backend receives the visitor event and nothing else.
 
 ---
 
@@ -125,7 +151,14 @@ On a slow CPU, raise `--skip` before lowering accuracy anywhere else.
 | `--gallery-url URL` | Fetch enrolled vectors from the HTTP gallery instead |
 | `--detector mtcnn\|haar` | Must match enrollment |
 | `--threshold 0.675` | Override the match cutoff |
-| `--need 5` | Consecutive frames on one identity before firing |
+| `--need 5` | Consecutive frames before a *known* face fires |
+| `--unknown-hold 10` | Seconds of unknown face before the mic opens |
+| `--voice-wait 30` | Seconds to wait for speech to start |
+| `--dropout 1` | Face gap that does not reset the unknown clock |
+| `--no-voice` | Post unknown when the face hold ends, no microphone |
+| `--voice-collection visitor_voices` | Qdrant collection of enrolled voice vectors |
+| `--voice-threshold 0.25` | Cosine cutoff on the Qdrant search score |
+| `--speech-rms 0.02` | Mic energy that counts as speech starting |
 | `--cooldown 120` | Seconds before the same identity fires again |
 | `--skip N` | Process every Nth frame if CPU is slow |
 | `--no-preview` | Headless |
