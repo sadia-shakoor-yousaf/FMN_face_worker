@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 from qdrant_client import QdrantClient
-from qdrant_client.models import FieldCondition, Filter, MatchValue
+from qdrant_client.models import FieldCondition, Filter, MatchValue, PayloadSchemaType
 
 from .gallery_sync import GallerySyncError
 from .qdrant_gallery import qdrant_settings
@@ -34,6 +34,43 @@ def _patient_filter(patient_id: int) -> Filter:
     )
 
 
+def _ensure_patient_index(client: QdrantClient, collection: str) -> None:
+    """Qdrant Cloud rejects a patient_id filter until this integer index exists."""
+    client.create_payload_index(
+        collection_name=collection,
+        field_name="patient_id",
+        field_schema=PayloadSchemaType.INTEGER,
+        wait=True,
+    )
+
+
+def _nearest(
+    client: QdrantClient,
+    collection: str,
+    vector: list[float],
+    patient_id: int,
+) -> list[Any]:
+    query_filter = _patient_filter(patient_id)
+    if hasattr(client, "query_points"):
+        found = client.query_points(
+            collection_name=collection,
+            query=vector,
+            query_filter=query_filter,
+            limit=1,
+            with_payload=True,
+        )
+        return list(found.points)
+    return list(
+        client.search(  # type: ignore[attr-defined]
+            collection_name=collection,
+            query_vector=vector,
+            query_filter=query_filter,
+            limit=1,
+            with_payload=True,
+        )
+    )
+
+
 def count_voices(
     *,
     patient_id: int,
@@ -43,6 +80,7 @@ def count_voices(
     """How many enrolled voice points this patient has. Raises GallerySyncError."""
     client, name = _client(collection, timeout)
     try:
+        _ensure_patient_index(client, name)
         counted = client.count(
             collection_name=name,
             count_filter=_patient_filter(patient_id),
@@ -69,13 +107,8 @@ def search_voice(
         )
     client, name = _client(collection, timeout)
     try:
-        hits: list[Any] = client.search(
-            collection_name=name,
-            query_vector=probe.tolist(),
-            query_filter=_patient_filter(patient_id),
-            limit=1,
-            with_payload=True,
-        )
+        _ensure_patient_index(client, name)
+        hits = _nearest(client, name, probe.tolist(), patient_id)
     except Exception as e:
         raise GallerySyncError(f"cannot search {name}: {e}") from e
     if not hits:

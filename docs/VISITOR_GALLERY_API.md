@@ -203,6 +203,7 @@ The collection is created in Qdrant Cloud (192-d, Cosine). The API still refuses
 | Collection | `visitor_voices` |
 | Vector size | 192 |
 | Distance | Cosine |
+| Payload index | `patient_id` as **integer**. Qdrant Cloud returns 400 on a filtered count or search until this index exists. The worker creates it if it is missing. |
 | Model | `speechbrain/spkrec-ecapa-voxceleb` (ECAPA-TDNN). One clip, 16 kHz mono, L2-normalized. The care PC uses this exact model for the live clip (`face_cv/speaker_embed.py`). A different speaker model will not match. |
 
 One enrolled clip is one point. A re-enrollment of the same clip must reuse the point id so it replaces the old vector.
